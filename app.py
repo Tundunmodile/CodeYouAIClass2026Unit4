@@ -1,13 +1,16 @@
 import os
 import math
 from dotenv import load_dotenv
-from langchain_openai import OpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_core.vectorstores.in_memory import InMemoryVectorStore
 from sentence_transformers import SentenceTransformer
 from datetime import datetime
 from langchain_core.documents import Document
-#from langchain.text_splitter import CharacterTextSplitter, 
-from langchain_text_splitters import CharacterTextSplitter,RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
+from langchain_text_splitters import CharacterTextSplitter, RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
+from langchain_core.tools import tool
+from langchain.agents import create_agent
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage
 
 # Load environment variables
 load_dotenv()
@@ -159,18 +162,21 @@ def load_document_with_chunks(vector_store, file_path, chunks):
     try:
         total_chunks = len(chunks)
         for index, chunk in enumerate(chunks, start=1):
-            # Update metadata for the chunk
-            chunk.metadata.update({
-                'fileName': f"{os.path.basename(file_path)} (Chunk {index}/{total_chunks})",
-                'createdAt': datetime.now().isoformat(),
-                'chunkIndex': index
-            })
+            # Ensure the chunk is a Document object and update metadata
+            if isinstance(chunk, Document):
+                chunk.metadata.update({
+                    'fileName': f"{os.path.basename(file_path)} (Chunk {index}/{total_chunks})",
+                    'createdAt': datetime.now().isoformat(),
+                    'chunkIndex': index
+                })
 
-            # Add the chunk to the vector store
-            vector_store.add_documents([chunk])
+                # Add the chunk to the vector store
+                vector_store.add_documents([chunk])
 
-            # Print progress
-            print(f"✅ Processed chunk {index}/{total_chunks} for file '{os.path.basename(file_path)}'.")
+                # Print progress
+                print(f"✅ Processed chunk {index}/{total_chunks} for file '{os.path.basename(file_path)}'.")
+            else:
+                print(f"⚠️ Skipping invalid chunk at index {index}: Not a Document object.")
 
         return total_chunks
 
@@ -178,9 +184,9 @@ def load_document_with_chunks(vector_store, file_path, chunks):
         print(f"❌ An error occurred while processing chunks: {str(e)}")
         return 0
 
-def load_with_fixed_size_chunking(vector_store, file_path):
+def load_with_paragraph_chunking(vector_store, file_path):
     """
-    Load the Employee Handbook with fixed-size chunking.
+    Load the Employee Handbook with paragraph-based chunking.
 
     Args:
         vector_store: The InMemoryVectorStore instance.
@@ -192,10 +198,10 @@ def load_with_fixed_size_chunking(vector_store, file_path):
             text = file.read()
 
         # Initialize the text splitter
-        text_splitter = CharacterTextSplitter(
-            chunk_size=1000,
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1500,
             chunk_overlap=0,
-            separator=" "
+            separators=["\n\n", "\n", " ", ""]
         )
 
         # Create document chunks
@@ -205,67 +211,264 @@ def load_with_fixed_size_chunking(vector_store, file_path):
         total_chunks = load_document_with_chunks(vector_store, file_path, chunks)
 
         # Calculate statistics
-        total_size = sum(len(chunk.page_content) for chunk in chunks)
-        avg_chunk_size = total_size / total_chunks if total_chunks > 0 else 0
+        chunk_sizes = [len(chunk.page_content) for chunk in chunks]
+        smallest_chunk = min(chunk_sizes) if chunk_sizes else 0
+        largest_chunk = max(chunk_sizes) if chunk_sizes else 0
+        chunks_starting_with_newline = sum(1 for chunk in chunks if chunk.page_content.startswith("\n"))
 
         # Print statistics
-        print(f"✅ Created {total_chunks} chunks with an average size of {avg_chunk_size:.2f} characters.")
+        print("\n=== Paragraph-Based Chunking Statistics ===")
+        print(f"Total chunks created: {total_chunks}")
+        print(f"Smallest chunk size: {smallest_chunk}")
+        print(f"Largest chunk size: {largest_chunk}")
+        print(f"Chunks starting with a newline: {chunks_starting_with_newline}")
 
-    except FileNotFoundError:
-        print(f"❌ Error: File not found - {file_path}")
     except Exception as e:
-        print(f"❌ An unexpected error occurred: {str(e)}")
+        print(f"\u274c An error occurred while processing the document: {str(e)}")
+
+# def load_with_markdown_chunking(vector_store, file_path):
+#     """
+#     Load the Employee Handbook with markdown-based chunking.
+
+#     Args:
+#         vector_store: The InMemoryVectorStore instance.
+#         file_path (str): The path to the Employee Handbook file.
+#     """
+#     try:
+#         # Read the file content
+#         with open(file_path, 'r') as file:
+#             text = file.read()
+
+#         # Initialize the MarkdownHeaderTextSplitter
+#         markdown_splitter = MarkdownHeaderTextSplitter(
+#             headers_to_split_on=[("#", "Header 1"), ("##", "Header 2")]
+#         )
+
+#         # Split the document by markdown headers
+#         header_chunks = markdown_splitter.split_text(text)
+
+#         # Initialize the RecursiveCharacterTextSplitter
+#         text_splitter = RecursiveCharacterTextSplitter(
+#             chunk_size=5000,
+#             chunk_overlap=200
+#         )
+
+#         # Further split the header chunks into smaller chunks
+#         chunks = text_splitter.create_documents(header_chunks)
+
+#         # Pass chunks to the vector store
+#         total_chunks = load_document_with_chunks(vector_store, file_path, chunks)
+
+#         # Print statistics
+#         chunk_sizes = [len(chunk.page_content) for chunk in chunks]
+#         smallest_chunk = min(chunk_sizes) if chunk_sizes else 0
+#         largest_chunk = max(chunk_sizes) if chunk_sizes else 0
+#         chunks_starting_with_newline = sum(1 for chunk in chunks if chunk.page_content.startswith("\n"))
+
+#         print("\n=== Markdown-Based Chunking Statistics ===")
+#         print(f"Total chunks created: {total_chunks}")
+#         print(f"Smallest chunk size: {smallest_chunk}")
+#         print(f"Largest chunk size: {largest_chunk}")
+#         print(f"Chunks starting with a newline: {chunks_starting_with_newline}")
+
+#     except Exception as e:
+#         print(f"❌ An error occurred while processing the document: {str(e)}")
+
+# def load_with_fixed_size_chunking(vector_store, file_path):
+#     """
+#     Load the Employee Handbook with fixed-size chunking.
+
+#     Args:
+#         vector_store: The InMemoryVectorStore instance.
+#         file_path (str): The path to the Employee Handbook file.
+#     """
+#     try:
+#         # Read the file content
+#         with open(file_path, 'r') as file:
+#             text = file.read()
+
+#         # Initialize the CharacterTextSplitter
+#         text_splitter = CharacterTextSplitter(
+#             chunk_size=1000,
+#             chunk_overlap=0,
+#             separator=" "
+#         )
+
+#         # Create document chunks
+#         chunks = text_splitter.create_documents([text])
+
+#         # Pass chunks to the vector store
+#         total_chunks = load_document_with_chunks(vector_store, file_path, chunks)
+
+#         # Calculate statistics
+#         chunk_sizes = [len(chunk.page_content) for chunk in chunks]
+#         average_chunk_size = sum(chunk_sizes) / len(chunk_sizes) if chunk_sizes else 0
+
+#         # Print statistics
+#         print("\n=== Fixed-Size Chunking Statistics ===")
+#         print(f"Total chunks created: {total_chunks}")
+#         print(f"Average chunk size: {average_chunk_size:.2f}")
+
+#     except Exception as e:
+#         print(f"❌ An error occurred while processing the document: {str(e)}")
+
+# Function to create a search tool
+def create_search_tool(vector_store):
+    """
+    Creates a LangChain Tool for searching documents in the vector store.
+
+    Args:
+        vector_store: The vector store to perform similarity searches on.
+
+    Returns:
+        A LangChain Tool for searching documents.
+    """
+
+    @tool
+    def search_documents(query: str) -> str:
+        """
+        Searches the company document repository for relevant information based on the given query.
+        Use this to find information about company policies, benefits, and procedures.
+
+        Args:
+            query: The query string to search for.
+
+        Returns:
+            A formatted string of the top 3 results with their content and scores.
+        """
+        results = vector_store.similarity_search_with_score(query, k=3)
+        formatted_results = "\n\n".join(
+            [
+                f"Result {i + 1} (Score: {score:.4f}): {content}"
+                for i, (content, score) in enumerate(results)
+            ]
+        )
+        return formatted_results
+
+    return search_documents
+
+def create_react_agent_with_search(vector_store):
+    """
+    Creates a ReAct agent using LangChain's ReAct pattern and a search tool.
+
+    Args:
+        vector_store: The vector store to perform similarity searches on.
+
+    Returns:
+        An AgentExecutor instance for the ReAct agent.
+    """
+    try:
+        # Create the search tool
+        search_tool = create_search_tool(vector_store)
+
+        # Define the prompt template
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are a helpful assistant that answers employee questions about company policies, benefits, and procedures.
+
+When responding:
+- Always search the internal knowledge base before answering.
+- Base your answer only on retrieved documents.
+- Cite the document titles or chunk identifiers used.
+- If no relevant information is found, say you could not locate the answer.
+"""),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{input}")
+        ])
+
+        # Create the ReAct agent
+        react_agent = create_agent(
+            tools=[search_tool],
+            model="gpt-4o",  # Updated to use 'llm' instead of 'prompt'
+            debug=True
+        )
+
+        # Wrap the agent in an executor
+        return react_agent
+
+    except Exception as e:
+        print(f"❌ An error occurred while creating the ReAct agent: {str(e)}")
+        raise
 
 def main():
     print("🤖 Python LangChain Agent Starting...\n")
 
-    # Check for GitHub token
-    if not os.getenv("GITHUB_TOKEN"):
-        print("❌ Error: GITHUB_TOKEN not found in environment variables.")
+    # Check for OpenAI API key
+    if not os.getenv("OPENAI_API_KEY"):
+        print("❌ Error: OPENAI_API_KEY not found in environment variables.")
         return
 
     # Initialize vector store and other components
     embeddings = OpenAIEmbeddings(
         model="text-embedding-3-small",
         base_url="https://models.inference.ai.azure.com",
-        api_key=os.getenv("GITHUB_TOKEN"),
+        api_key=os.getenv("OPENAI_API_KEY"),
         check_embedding_ctx_length=False
     )
     vector_store = InMemoryVectorStore(embedding=embeddings)
 
+    # Initialize ChatOpenAI instance
+    chat_model = ChatOpenAI(
+        model="gpt-4o",
+        temperature=0,
+        base_url="https://models.inference.ai.azure.com",
+        api_key=os.getenv("OPENAI_API_KEY")
+    )
+
     # Display header
     print("=== Loading Documents into Vector Database ===")
 
-    # Load the document
-    document_id = load_document(vector_store, "/Users/tundun/CodeYouAIClass2026Unit4/HealthInsuranceBrochure.md")
-    
-    # Load the Employee Handbook document with chunking
-    load_with_fixed_size_chunking(vector_store, "/Users/tundun/CodeYouAIClass2026Unit4/EmployeeHandbook.md")
+    # # Load the Employee Handbook document with fixed-size chunking
+    # load_with_fixed_size_chunking(vector_store, "/Users/tundun/CodeYouAIClass2026Unit4/EmployeeHandbook.md")
 
-    if document_id:
-        print(f"Document '{document_id}' loaded successfully into the vector store.")
+    # Load the Employee Handbook document with paragraph-based chunking
+    load_with_paragraph_chunking(vector_store, "/Users/tundun/CodeYouAIClass2026Unit4/EmployeeHandbook.md")
 
-    # Interactive semantic search loop
-    print("\n=== Semantic Search ===")
+    # # Load the Employee Handbook document with markdown-based chunking
+    # load_with_markdown_chunking(vector_store, "/Users/tundun/CodeYouAIClass2026Unit4/EmployeeHandbook.md")
+
+    # Initialize the ReAct agent
+    agent_executor = create_react_agent_with_search(vector_store)
+    print("ReAct Agent initialized successfully.")
+
+    # Chat interface replacing semantic search
+    print("\n=== Welcome to the Chat Interface ===")
+    print("I am your assistant. Ask me anything, and I will use my tools to help you. Type 'quit' or 'exit' to end the chat.")
+
+    chat_history = []
+
     while True:
-        query = input("Enter a search query (or 'quit' to exit): ").strip()
+        user_input = input("You: ").strip()
 
-        if query.lower() in {"quit", "exit"}:
+        if user_input.lower() in {"quit", "exit"}:
+            print("Goodbye! Thanks for chatting with me.")
             break
 
-        if not query:
-            print("⚠️ Please enter a valid query.")
+        if not user_input:
+            print("⚠️ Please enter a valid message.")
             continue
 
-        # Perform the search and display results
-        results = search_sentences(vector_store, query)
-        print("\nResults:")
-        for rank, (sentence, score) in enumerate(results, start=1):
-            print(f"{rank}. [Score: {score:.4f}] {sentence}")
+        try:
+            # Call the agent executor with user input and chat history
+            result = agent_executor.invoke({
+                "input": user_input,
+                "chat_history": chat_history
+            })
 
-        print("\n")  # Blank line for readability
+            # Extract and display the agent's response
+            agent_response = result["output"]
+            print(f"Agent: {agent_response}")
+
+            # Update chat history
+            chat_history.append(HumanMessage(content=user_input))
+            chat_history.append(AIMessage(content=agent_response))
+        except Exception as e:
+            print(f"❌ An error occurred: {str(e)}")
 
     print("Goodbye! Thanks for using the Semantic Search tool.")
+
+    # Initialize the ReAct agent
+    # react_agent_executor = create_react_agent_with_search(vector_store)
+    # print("ReAct Agent initialized successfully.")
 
 
 
