@@ -5,6 +5,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_core.vectorstores.in_memory import InMemoryVectorStore
 from sentence_transformers import SentenceTransformer
 from datetime import datetime
+from langchain_core.documents import Document
 
 # Load environment variables
 load_dotenv()
@@ -23,25 +24,118 @@ def cosine_similarity(vector_a, vector_b):
     
     return dot_product / (norm_a * norm_b)
 
-def search_sentences(vector_store, query, k=3):
+def search_sentences(vector_store, query, k=3, category=None):
     """
-    Search for similar sentences in the vector store.
+    Search for similar sentences in the vector store with optional category filtering.
 
     Args:
         vector_store: The InMemoryVectorStore instance.
         query (str): The search query string.
         k (int): The number of top results to return. Defaults to 3.
+        category (str, optional): The category to filter results by. Defaults to None.
 
     Returns:
         list: A list of tuples containing the sentence and its similarity score.
     """
-    results = vector_store.similarity_search_with_score(query, k=k)
+    if category:
+        results = vector_store.similarity_search_with_score(
+            query, k=k, filter={"category": category}
+        )
+    else:
+        results = vector_store.similarity_search_with_score(query, k=k)
 
     print("\n🔍 Search Results:")
     for rank, (sentence, score) in enumerate(results, start=1):
         print(f"{rank}. [Score: {score:.4f}] {sentence}")
 
     return results
+
+def hybrid_search(vector_store, query, k=3, category=None, similarity_threshold=0.5):
+    """
+    Perform a hybrid search combining vector similarity and keyword matching.
+
+    Args:
+        vector_store: The InMemoryVectorStore instance.
+        query (str): The search query string.
+        k (int): The number of top results to return. Defaults to 3.
+        category (str, optional): The category to filter results by. Defaults to None.
+        similarity_threshold (float): The minimum similarity score to include a result. Defaults to 0.5.
+
+    Returns:
+        list: A list of tuples containing the sentence and its combined score.
+    """
+    # Vector similarity search
+    if category:
+        vector_results = vector_store.similarity_search_with_score(
+            query, k=k, filter={"category": category}
+        )
+    else:
+        vector_results = vector_store.similarity_search_with_score(query, k=k)
+
+    # Filter vector results by similarity threshold
+    vector_results = [(sentence, score) for sentence, score in vector_results if score >= similarity_threshold]
+
+    # Keyword matching
+    keyword_results = []
+    for sentence in vector_store.texts:
+        if query.lower() in sentence.lower():
+            keyword_results.append((sentence, 1.0))  # Assign a perfect score for keyword matches
+
+    # Combine results
+    combined_results = {sentence: score for sentence, score in vector_results}
+    for sentence, score in keyword_results:
+        if sentence in combined_results:
+            combined_results[sentence] += score  # Boost score for keyword matches
+        else:
+            combined_results[sentence] = score
+
+    # Sort by combined score
+    sorted_results = sorted(combined_results.items(), key=lambda x: x[1], reverse=True)
+
+    print("\n🔍 Hybrid Search Results:")
+    for rank, (sentence, score) in enumerate(sorted_results[:k], start=1):
+        print(f"{rank}. [Score: {score:.4f}] {sentence}")
+
+    return sorted_results[:k]
+
+def load_document(vector_store, file_path):
+    """
+    Load a document into the vector store.
+
+    Args:
+        vector_store: The InMemoryVectorStore instance.
+        file_path (str): The path to the file to load.
+
+    Returns:
+        str: The document ID.
+    """
+    try:
+        # Read the file content
+        with open(file_path, 'r') as file:
+            content = file.read()
+
+        # Create a Document object
+        document = Document(
+            page_content=content,
+            metadata={
+                'fileName': os.path.basename(file_path),
+                'createdAt': datetime.now().isoformat()
+            }
+        )
+
+        # Add the document to the vector store
+        vector_store.add_documents([document])
+
+        # Print success message
+        print(f"✅ Successfully added document '{os.path.basename(file_path)}' with content length {len(content)}.")
+
+        # Return the document ID (assuming the vector store generates one)
+        return document.metadata['fileName']
+
+    except FileNotFoundError:
+        print(f"❌ Error: File not found - {file_path}")
+    except Exception as e:
+        print(f"❌ An unexpected error occurred: {e}")
 
 def main():
     print("🤖 Python LangChain Agent Starting...\n")
@@ -60,34 +154,14 @@ def main():
     )
     vector_store = InMemoryVectorStore(embedding=embeddings)
 
-    # Add sentences to vector store
-    sentences = [
-        "The quick brown fox jumps over the lazy dog.",
-        "The dog barked at the mailman.",
-        "The bird flew over the mat.",
-        "The cat sat on the windowsill.",
-        "The sun is shining brightly today.",
-        "The rain is pouring down outside.",
-        "The children are playing in the park.",
-        "The car is parked in the driveway.",
-        "The book is on the table.",
-        "The coffee is hot and delicious.",
-        "The music is playing softly in the background.",
-        "The flowers are blooming in the garden.",
-        "The stars are twinkling in the night sky.",
-        "The river flows gently through the valley.",
-        "The mountain is covered in snow.",
-        "The beach is crowded with tourists.",
-        "The city lights are shining brightly at night.",
-        "The food at the restaurant was amazing.",
-        "The movie was thrilling and full of suspense."
-    ]
-    metadata = [{"created_at": datetime.now().isoformat(), "index": i} for i in range(len(sentences))]
-    vector_store.add_texts(sentences, metadata=metadata)
+    # Display header
+    print("=== Loading Documents into Vector Database ===")
 
-    print(f"✅ Stored {len(sentences)} sentences in the vector store.")
-    for i, sentence in enumerate(sentences, start=1):
-        print(f"Sentence {i}: {sentence}")
+    # Load the document
+    document_id = load_document(vector_store, "/Users/tundun/CodeYouAIClass2026Unit4/HealthInsuranceBrochure.md")
+
+    if document_id:
+        print(f"Document '{document_id}' loaded successfully into the vector store.")
 
     # Interactive semantic search loop
     print("\n=== Semantic Search ===")
