@@ -6,6 +6,8 @@ from langchain_core.vectorstores.in_memory import InMemoryVectorStore
 from sentence_transformers import SentenceTransformer
 from datetime import datetime
 from langchain_core.documents import Document
+#from langchain.text_splitter import CharacterTextSplitter, 
+from langchain_text_splitters import CharacterTextSplitter,RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
 
 # Load environment variables
 load_dotenv()
@@ -142,6 +144,78 @@ def load_document(vector_store, file_path):
         else:
             print(f"❌ An unexpected error occurred: {str(e)}")
 
+def load_document_with_chunks(vector_store, file_path, chunks):
+    """
+    Load document chunks into the vector store.
+
+    Args:
+        vector_store: The InMemoryVectorStore instance.
+        file_path (str): The path to the file.
+        chunks (list): A list of LangChain Document objects.
+
+    Returns:
+        int: The total number of chunks stored.
+    """
+    try:
+        total_chunks = len(chunks)
+        for index, chunk in enumerate(chunks, start=1):
+            # Update metadata for the chunk
+            chunk.metadata.update({
+                'fileName': f"{os.path.basename(file_path)} (Chunk {index}/{total_chunks})",
+                'createdAt': datetime.now().isoformat(),
+                'chunkIndex': index
+            })
+
+            # Add the chunk to the vector store
+            vector_store.add_documents([chunk])
+
+            # Print progress
+            print(f"✅ Processed chunk {index}/{total_chunks} for file '{os.path.basename(file_path)}'.")
+
+        return total_chunks
+
+    except Exception as e:
+        print(f"❌ An error occurred while processing chunks: {str(e)}")
+        return 0
+
+def load_with_fixed_size_chunking(vector_store, file_path):
+    """
+    Load the Employee Handbook with fixed-size chunking.
+
+    Args:
+        vector_store: The InMemoryVectorStore instance.
+        file_path (str): The path to the Employee Handbook file.
+    """
+    try:
+        # Read the file content
+        with open(file_path, 'r') as file:
+            text = file.read()
+
+        # Initialize the text splitter
+        text_splitter = CharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=0,
+            separator=" "
+        )
+
+        # Create document chunks
+        chunks = text_splitter.create_documents([text])
+
+        # Pass chunks to the vector store
+        total_chunks = load_document_with_chunks(vector_store, file_path, chunks)
+
+        # Calculate statistics
+        total_size = sum(len(chunk.page_content) for chunk in chunks)
+        avg_chunk_size = total_size / total_chunks if total_chunks > 0 else 0
+
+        # Print statistics
+        print(f"✅ Created {total_chunks} chunks with an average size of {avg_chunk_size:.2f} characters.")
+
+    except FileNotFoundError:
+        print(f"❌ Error: File not found - {file_path}")
+    except Exception as e:
+        print(f"❌ An unexpected error occurred: {str(e)}")
+
 def main():
     print("🤖 Python LangChain Agent Starting...\n")
 
@@ -162,11 +236,11 @@ def main():
     # Display header
     print("=== Loading Documents into Vector Database ===")
 
-    # # Load the document
-    # document_id = load_document(vector_store, "/Users/tundun/CodeYouAIClass2026Unit4/HealthInsuranceBrochure.md")
+    # Load the document
+    document_id = load_document(vector_store, "/Users/tundun/CodeYouAIClass2026Unit4/HealthInsuranceBrochure.md")
     
-    # Load the Employee Handbook document
-    document_id = load_document(vector_store, "/Users/tundun/CodeYouAIClass2026Unit4/EmployeeHandbook.md")
+    # Load the Employee Handbook document with chunking
+    load_with_fixed_size_chunking(vector_store, "/Users/tundun/CodeYouAIClass2026Unit4/EmployeeHandbook.md")
 
     if document_id:
         print(f"Document '{document_id}' loaded successfully into the vector store.")
