@@ -135,7 +135,12 @@ def load_document(vector_store, file_path):
     except FileNotFoundError:
         print(f"❌ Error: File not found - {file_path}")
     except Exception as e:
-        print(f"❌ An unexpected error occurred: {e}")
+        if "maximum context length" in str(e).lower() or "token" in str(e).lower():
+            print("⚠️ This document is too large to embed as a single chunk.")
+            print("Token limit exceeded. The embedding model can only process up to 8,191 tokens at once.")
+            print("Solution: The document needs to be split into smaller chunks.")
+        else:
+            print(f"❌ An unexpected error occurred: {str(e)}")
 
 def main():
     print("🤖 Python LangChain Agent Starting...\n")
@@ -157,8 +162,11 @@ def main():
     # Display header
     print("=== Loading Documents into Vector Database ===")
 
-    # Load the document
-    document_id = load_document(vector_store, "/Users/tundun/CodeYouAIClass2026Unit4/HealthInsuranceBrochure.md")
+    # # Load the document
+    # document_id = load_document(vector_store, "/Users/tundun/CodeYouAIClass2026Unit4/HealthInsuranceBrochure.md")
+    
+    # Load the Employee Handbook document
+    document_id = load_document(vector_store, "/Users/tundun/CodeYouAIClass2026Unit4/EmployeeHandbook.md")
 
     if document_id:
         print(f"Document '{document_id}' loaded successfully into the vector store.")
