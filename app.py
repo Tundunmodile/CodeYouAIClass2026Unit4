@@ -15,6 +15,12 @@ from langchain_core.messages import HumanMessage, AIMessage
 # Load environment variables
 load_dotenv()
 
+# Verify GitHub token is loaded
+if os.getenv("GITHUB_TOKEN"):
+    print(f"✅ GitHub Token loaded successfully")
+else:
+    print("⚠️ GitHub Token not found in environment variables. Set GITHUB_TOKEN as an environment variable.")
+
 def cosine_similarity(vector_a, vector_b):
     """
     Calculate cosine similarity between two vectors
@@ -392,16 +398,16 @@ When responding:
 def main():
     print("🤖 Python LangChain Agent Starting...\n")
 
-    # Check for OpenAI API key
-    if not os.getenv("OPENAI_API_KEY"):
-        print("❌ Error: OPENAI_API_KEY not found in environment variables.")
+    # Check for GitHub Token
+    if not os.getenv("GITHUB_TOKEN"):
+        print("❌ Error: GITHUB_TOKEN not found in environment variables.")
         return
 
     # Initialize vector store and other components
     embeddings = OpenAIEmbeddings(
         model="text-embedding-3-small",
         base_url="https://models.inference.ai.azure.com",
-        api_key=os.getenv("OPENAI_API_KEY"),
+        api_key=os.getenv("GITHUB_TOKEN"),
         check_embedding_ctx_length=False
     )
     vector_store = InMemoryVectorStore(embedding=embeddings)
@@ -411,7 +417,7 @@ def main():
         model="gpt-4o",
         temperature=0,
         base_url="https://models.inference.ai.azure.com",
-        api_key=os.getenv("OPENAI_API_KEY")
+        api_key=os.getenv("GITHUB_TOKEN")
     )
 
     # Display header
